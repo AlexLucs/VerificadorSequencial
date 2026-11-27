@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verificador sequencial de imagens</title>
+<style>
+/* Tema escuro (padrão). Os temas claros abaixo só redefinem as variáveis. */
+:root {
+  --page-bg: #15171a; --page-text: #e9edf1; --muted: #b8c0ca;
+  --field-bg: #202329; --field-border: #414750; --field-text: #f4f6f8;
+  --panel-bg: #202329; --entry-border: #414750;
+  --primary: #3478d4; --primary-text: #ffffff;
+  --secondary-bg: #343a43; --secondary-border: #4a515b; --secondary-text: #ffffff;
+  --stop-bg: #555d68; --link: #9fc7ff;
+  color-scheme: dark;
+  font: 16px/1.45 system-ui, sans-serif;
+}
+/* O bloco claro aparece duas vezes: tema escolhido manualmente e tema "auto" com o SO claro. */
+:root[data-theme="light"] {
+  --page-bg: #f5f7fa; --page-text: #20252b; --muted: #5c6672;
+  --field-bg: #ffffff; --field-border: #c7cdd5; --field-text: #20252b;
+  --panel-bg: #ffffff; --entry-border: #d2d8e0;
+  --secondary-bg: #e1e6ec; --secondary-border: #c7cdd5; --secondary-text: #20252b;
+  --stop-bg: #8a939e; --link: #1f5fae;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --page-bg: #f5f7fa; --page-text: #20252b; --muted: #5c6672;
+    --field-bg: #ffffff; --field-border: #c7cdd5; --field-text: #20252b;
+    --panel-bg: #ffffff; --entry-border: #d2d8e0;
+    --secondary-bg: #e1e6ec; --secondary-border: #c7cdd5; --secondary-text: #20252b;
+    --stop-bg: #8a939e; --link: #1f5fae;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+body { width: 96%; margin: 24px auto; background: var(--page-bg); color: var(--page-text); }
+/* Reserva espaço para os três botões fixos do canto superior direito. */
+h1 { font-size: 1.4rem; margin: 0 0 8px; padding-right: 190px; }
+h2 { font-size: 1.15rem; margin: 0; }
+#appVersion { margin-left: 6px; font-size: .75rem; font-weight: 500; color: var(--muted); white-space: nowrap; }
+p, .hint { color: var(--muted); }
+label { display: block; font-weight: 600; margin: 16px 0 7px; }
+textarea, input { width: 100%; padding: 10px; border: 1px solid var(--field-border); border-radius: 7px; background: var(--field-bg); color: var(--field-text); }
+textarea { min-height: 82px; resize: vertical; overflow-wrap: anywhere; }
+code { overflow-wrap: anywhere; }
+.small { font-size: .85rem; }
+
+.row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.row > div { flex: 1 1 170px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+
+button { padding: 10px 16px; border: 1px solid transparent; border-radius: 7px; background: var(--primary); color: var(--primary-text); font-weight: 600; cursor: pointer; transition: filter .15s ease, transform .15s ease; }
+button:hover:not(:disabled) { filter: brightness(1.12); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.secondary { background: var(--secondary-bg); border-color: var(--secondary-border); color: var(--secondary-text); }
+#stopBtn { background: var(--stop-bg); }
+
+/* Botões flutuantes */
+#topBtn { position: fixed; right: 22px; bottom: 22px; z-index: 1000; display: none; border-radius: 999px; padding: 16.8px 22.4px; font-size: 1.4em; box-shadow: 0 5px 22px #0008; }
+#topBtn.visible { display: block; }
+.fab { position: fixed; top: 18px; z-index: 1100; width: 48px; height: 48px; padding: 0; border-radius: 50%; font-size: 1.45rem; line-height: 1; box-shadow: 0 5px 22px #0008; }
+#bookmarkToggle { right: 22px; }
+#historyToggle { right: 82px; }
+#themeToggle { right: 142px; font-size: 1.35rem; }
+
+/* Modais */
+.modal { position: fixed; top: 76px; right: 22px; z-index: 1099; display: none; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 96px); overflow: auto; margin: 0; padding: 16px; background: var(--panel-bg); border: 1px solid var(--field-border); border-radius: 10px; box-shadow: 0 8px 30px #0009; }
+.modal.open { display: block; }
+.modalHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.modalClose { margin: 0; padding: 6px 14px; }
+.historyEntry { padding: 10px 0; border-top: 1px solid var(--entry-border); overflow-wrap: anywhere; }
+.historyEntry .small { display: block; }
+.historyEntry .historyLoad { display: block; cursor: pointer; color: var(--link); text-decoration: underline; border: 0; background: transparent; padding: 0; margin: 7px 0 0; text-align: left; font: inherit; font-size: .85rem; font-weight: 400; overflow-wrap: anywhere; }
+.historyEntry .historyLoad:hover { filter: brightness(1.2); }
+
+.status { margin: 16px 0; padding: 12px; background: var(--panel-bg); border-radius: 7px; white-space: pre-wrap; }
+
+#results { display: flex; flex-direction: column; align-items: stretch; gap: 0; width: 100%; margin: 18px auto 0; }
+/* Cada folha fica num contêiner com a imagem e uma camada de marcas por cima.
+   content-visibility deixa o navegador pular a pintura das folhas fora da tela; o aspect-ratio
+   (definido no JS) mantém a altura correta enquanto a folha não é pintada. */
+.sheet { position: relative; width: 100%; content-visibility: auto; contain-intrinsic-size: auto 300px; }
+#results img { display: block; width: 100%; height: auto; margin: 0; padding: 0; border: 0; }
+.sheetLayer { position: absolute; inset: 0; pointer-events: none; }
+.tile { position: absolute; box-sizing: border-box; }
+/* Marca de minuto: linha vertical na borda esquerda da miniatura, com o tempo ao lado. */
+.tile.minuteMark { border-left: 2px solid #ffb000; }
+.minuteLabel { position: absolute; top: 2px; left: 2px; padding: 1px 4px; border-radius: 3px; background: rgba(0, 0, 0, .72); color: #fff; font: 600 clamp(9px, 1.05vw, 13px)/1.2 system-ui, sans-serif; white-space: nowrap; }
+#tileTip { position: fixed; z-index: 1200; display: none; pointer-events: none; padding: 3px 7px; border-radius: 5px; background: rgba(0, 0, 0, .85); color: #fff; font-size: .8rem; white-space: nowrap; }
+
+@media (max-width: 600px) {
+  body { margin: 12px auto; }
+  h1 { padding-right: 176px; }
+  #topBtn { right: 12px; bottom: 12px; }
+  .fab { top: 12px; }
+  #bookmarkToggle { right: 12px; }
+  #historyToggle { right: 68px; }
+  #themeToggle { right: 124px; }
+  .modal { top: 68px; right: 12px; }
+}
+</style>
+</head>
+<body>
+<!-- Versão do arquivo: único lugar onde ela é definida. Mudanças registradas em CHANGELOG.md. -->
+<h1>Verificador sequencial de imagens <span id="appVersion" title="Versão do arquivo">v1.0.0</span></h1>
+<button id="themeToggle" class="fab" type="button" aria-label="Alternar tema" title="Tema: automático">◐</button>
+<button id="historyToggle" class="fab" type="button" aria-label="Histórico de buscas" title="Histórico de buscas" aria-controls="historyModal" aria-expanded="false">🕘</button>
+<button id="bookmarkToggle" class="fab" type="button" aria-label="Extrair URL da página do perfil" title="Extrair URL da página do perfil" aria-controls="bookmarkHelp" aria-expanded="false">🔖</button>
+<p>Insira a URL de uma imagem. O verificador incrementa o número antes de <code>_s.jpg</code>. Uma lacuna de um índice é tolerada; o fim é confirmado quando o índice ausente e o índice seguinte falham. Se o vídeo tiver o arquivo VTT de miniaturas, a busca para na última folha, cada minuto é marcado sobre as folhas e o tempo de cada miniatura aparece ao passar o mouse.</p>
+
+<label for="url">URL inicial da imagem</label>
+<textarea id="url" spellcheck="false" placeholder="Cole aqui a URL da primeira imagem..."></textarea>
+<p class="hint small">Aceita URL direta ou link Markdown no formato [texto](URL).</p>
+
+<div class="row">
+  <div><label for="start">Número inicial</label><input id="start" type="number" min="0" step="1" value="0"></div>
+  <div><label for="limit">Máximo de imagens</label><input id="limit" type="number" min="1" max="10000" step="1" value="500"></div>
+  <div><label for="delay">Intervalo (ms, mín. 1000)</label><input id="delay" type="number" min="1000" max="10000" step="1" value="2500"></div>
+  <div><label for="retries">Tentativas por imagem (máx. 3)</label><input id="retries" type="number" min="1" max="3" step="1" value="3"></div>
+</div>
+<div class="toolbar">
+  <button id="pasteBtn" class="secondary" type="button">Colar URL</button>
+  <button id="startBtn" type="button">Iniciar</button>
+  <button id="stopBtn" type="button" disabled>Parar</button>
+  <button id="clearBtn" class="secondary" type="button">Limpar</button>
+</div>
+<div id="status" class="status" role="status"></div>
+<div id="results"></div>
+<div id="tileTip" role="tooltip"></div>
+<button id="topBtn" type="button" aria-label="Voltar ao topo">↑ Topo</button>
+
+<section id="bookmarkHelp" class="modal" role="dialog" aria-labelledby="bookmarkTitle">
+  <div class="modalHeader">
+    <h2 id="bookmarkTitle">Extrair URL do perfil</h2>
+    <button class="modalClose secondary" id="closeBookmark" type="button">Fechar</button>
+  </div>
+  <p>Crie um favorito no navegador e cole o código abaixo no campo URL/endereço. Na página do perfil, clique no favorito antes de passar o mouse sobre a barra de progresso. O painel captura novas requisições JPG. Clique em “Copiar URL capturada”; o painel fechará automaticamente e a URL ficará na área de transferência.</p>
+  <textarea id="bookmarklet" readonly></textarea>
+  <button id="copyBookmarklet" type="button" style="margin-top:8px">Copiar código do favorito</button>
+  <p class="small">Para capturar a primeira imagem, passe o mouse sobre o início da timeline. Para outra imagem, mova o cursor para o ponto desejado e copie a URL mais recente.</p>
+</section>
+
+<section id="historyModal" class="modal" role="dialog" aria-labelledby="historyTitle">
+  <div class="modalHeader">
+    <h2 id="historyTitle">Histórico de buscas</h2>
+    <button class="modalClose secondary" id="closeHistory" type="button">Fechar</button>
+  </div>
+  <p class="small">As entradas são salvas somente quando uma busca iniciada termina ou é interrompida. As URLs ficam guardadas neste navegador; se contiverem tokens de acesso, use “Limpar histórico” ao terminar.</p>
+  <div id="historyList"></div>
+  <button id="clearHistory" class="secondary" type="button" style="margin-top:12px">Limpar histórico</button>
+</section>
+
+<script>
+/*
+ * Fluxo geral:
+ *  1. run() valida a URL e normaliza os campos numéricos.
+ *  1b. Baixa o VTT das miniaturas (mesma pasta, video-XXXp.vtt). Com ele, a busca sabe a última
+ *      folha e desenha as marcas de minuto; sem ele, segue como antes, sem marcas.
+ *  2. Para cada índice n, carrega a imagem com até `retries` tentativas.
+ *  3. Se n falhar, sonda n+1. Se n+1 existir, n foi lacuna ou falha transitória e a busca segue;
+ *     se n+1 também falhar, o fim da sequência é declarado. Só lacunas de UM índice são toleradas.
+ *  4. Ao terminar ou ser interrompida, a busca é gravada no histórico (localStorage). Clicar numa
+ *     entrada repete a mesma busca: mesma URL e mesmas configurações.
+ */
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+
+  // ---- Constantes ----------------------------------------------------------
+  const HISTORY_KEY = 'verificadorSequencialHistory';
+  const SETTINGS_KEY = 'verificadorSequencialSettings';
+  const THEME_KEY = 'verificadorSequencialTheme';
+  const HISTORY_MAX_ENTRIES = 50;
+  const IMAGE_TIMEOUT_MS = 15000;
+  const VTT_TIMEOUT_MS = 15000;
+  // Nas folhas, o número vem depois de "_vtt_": video-432p_vtt_7_s.jpg -> o VTT é video-432p.vtt
+  const SHEET_FILE_RE = /_vtt_\d+_s\.jpg$/i;
+  const THUMB_HOST = 'igliverec.com';            // domínio monitorado pelo bookmarklet
+  const NUMBER_MARKER = /(\d+)(?=_s\.jpg(?:$|[?#]))/i;
+  const FIELD_RULES = {                           // limites e padrões dos campos numéricos
+    limit: { min: 1, max: 10000, def: 500 },
+    delay: { min: 1000, max: 10000, def: 2500 },
+    retries: { min: 1, max: 3, def: 3 }
+  };
+  const SETTING_FIELDS = ['start', 'limit', 'delay', 'retries'];
+  const THEME_MODES = ['auto', 'light', 'dark'];
+  const STOP_EVENT = 'verificador-stop';
+  const MIN_DELAY_MS = 1000;   // piso absoluto de qualquer espera entre requisições
+  const JITTER_RATIO = 0.35;   // variação aleatória de até ±35% sobre o intervalo configurado
+
+  // ---- Elementos -----------------------------------------------------------
+  const urlField = $('url');
+  const status = $('status');
+  const results = $('results');
+  const startBtn = $('startBtn');
+  const stopBtn = $('stopBtn');
+  const historyModal = $('historyModal');
+  const bookmarkModal = $('bookmarkHelp');
+  const modals = [historyModal, bookmarkModal];
+
+  // ---- Estado --------------------------------------------------------------
+  let running = false;
+  let runToken = 0;              // incrementado a cada início/parada; invalida execuções antigas
+  let activeCancel = null;       // cancela o carregamento de imagem em andamento
+  let activeHistoryRun = null;   // dados da busca atual, gravados no histórico ao final
+  let requestCount = 0;
+  let displayedVtt = null;       // VTT das folhas exibidas (null se indisponível)
+  let vttChecked = false;        // o VTT já foi procurado na busca atual
+  let themeMode = 'auto';
+  let modalTrigger = null;       // botão que abriu o modal, para devolver o foco
+
+  // Testado uma vez: localStorage pode estar desativado (navegação privada, algumas
+  // configurações de file://). Nesse caso tudo continua funcionando, só não persiste.
+  const storageAvailable = (() => {
+    try {
+      const key = '__verificadorTeste';
+      localStorage.setItem(key, '1');
+      localStorage.removeItem(key);
+      return true;
+    } catch { return false; }
+  })();
+
+  const isCurrent = token => running && token === runToken;
+
+  /** Até que ponto do vídeo as folhas exibidas chegam, segundo o VTT. */
+  function shownUntil() {
+    let until = 0;
+    for (const sheet of results.children) {
+      const cues = displayedVtt?.bySheet.get(Number(sheet.dataset.sheet));
+      if (cues) until = Math.max(until, cues[cues.length - 1].end);
+    }
+    return until;
+  }
+
+  function progressLine() {
+    let line = `Carregamentos: ${requestCount} | Imagens exibidas: ${results.childElementCount}`;
+    if (displayedVtt) {
+      const total = displayedVtt.lastSheet + 1;
+      line += `\nDuração do vídeo: ${formatTime(Math.round(displayedVtt.duration))}`
+        + ` | Exibido até: ${formatTime(Math.round(shownUntil()))}`
+        + ` | Folhas: ${total} (0 a ${displayedVtt.lastSheet})`;
+    } else if (vttChecked) {
+      line += '\nDuração do vídeo: desconhecida (VTT indisponível, sem marcas de minuto)';
+    }
+    return line;
+  }
+
+  // ---- Configurações e tema -----------------------------------------------
+  function saveSettings() {
+    const settings = {};
+    for (const id of SETTING_FIELDS) settings[id] = $(id).value;
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch {}
+  }
+
+  function loadSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') || {};
+      for (const id of SETTING_FIELDS) {
+        if (saved[id] !== undefined && saved[id] !== '') $(id).value = saved[id];
+      }
+    } catch {}
+  }
+
+  /** Converte o campo em inteiro dentro dos limites e escreve o valor normalizado de volta. */
+  function normalizeField(id) {
+    const { min, max, def } = FIELD_RULES[id];
+    let value = Math.floor(Number($(id).value));
+    if (!Number.isFinite(value) || $(id).value.trim() === '') value = def;
+    value = Math.min(max, Math.max(min, value));
+    $(id).value = value;
+    return value;
+  }
+
+  function applyTheme(mode, persist = true) {
+    themeMode = THEME_MODES.includes(mode) ? mode : 'auto';
+    document.documentElement.dataset.theme = themeMode;
+    const labels = { auto: 'Automático', light: 'Claro', dark: 'Escuro' };
+    const icons = { auto: '◐', light: '☀', dark: '☾' };
+    const btn = $('themeToggle');
+    btn.textContent = icons[themeMode];
+    btn.title = `Tema: ${labels[themeMode]} (clique para alternar)`;
+    btn.setAttribute('aria-label', `Tema atual: ${labels[themeMode]}`);
+    if (persist) { try { localStorage.setItem(THEME_KEY, themeMode); } catch {} }
+  }
+
+  // ---- Histórico -----------------------------------------------------------
+  function readHistory() {
+    try {
+      const data = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+      return Array.isArray(data) ? data.filter(e => e && typeof e.url === 'string') : [];
+    } catch { return []; }
+  }
+
+  /** Repete a busca da entrada: mesma URL e mesmas configurações, iniciada na hora. */
+  function repeatHistoryEntry(entry) {
+    if (running && !confirm('Há uma busca em andamento. Deseja interrompê-la e repetir esta busca do histórico?')) return;
+    if (running) stopRun();
+    const settings = entry.settings || {};
+    const start = Number(settings.start);
+    urlField.value = entry.url;
+    $('start').value = Number.isSafeInteger(start) && start >= 0 ? start : 0;
+    // Valores ausentes caem no padrão; os fora da faixa são ajustados por normalizeField.
+    for (const id of ['limit', 'delay', 'retries']) {
+      $(id).value = settings[id] ?? '';
+      normalizeField(id);
+    }
+    saveSettings();
+    closeModal(historyModal);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    run();
+  }
+
+  function renderHistory() {
+    const list = $('historyList');
+    list.replaceChildren();
+    if (!storageAvailable) {
+      list.textContent = 'Histórico indisponível neste navegador: o armazenamento local está desativado ou bloqueado, então buscas e configurações não ficam salvas.';
+      return;
+    }
+    const entries = readHistory();
+    if (!entries.length) {
+      list.textContent = 'Ainda não há buscas concluídas.';
+      return;
+    }
+    for (const entry of entries) {
+      const item = document.createElement('div');
+      item.className = 'historyEntry';
+      const title = document.createElement('strong');
+      const finishedAt = entry.finishedAt ? new Date(entry.finishedAt) : null;
+      title.textContent = finishedAt && !Number.isNaN(finishedAt.getTime())
+        ? finishedAt.toLocaleString()
+        : 'Data indisponível';
+      const details = document.createElement('span');
+      details.className = 'small';
+      details.textContent = `Imagens: ${entry.images ?? 0} | Carregamentos: ${entry.requests ?? 0} | ${entry.result ?? ''}`;
+      const load = document.createElement('button');
+      load.type = 'button';
+      load.className = 'historyLoad';
+      load.textContent = entry.url;
+      load.title = 'Clique para repetir esta busca, com a mesma URL e as mesmas configurações';
+      load.addEventListener('click', () => repeatHistoryEntry(entry));
+      item.append(title, details, load);
+      list.appendChild(item);
+    }
+  }
+
+  function finishHistory(result) {
+    if (!activeHistoryRun) return;
+    const entry = {
+      url: activeHistoryRun.url,
+      settings: activeHistoryRun.settings,
+      startedAt: activeHistoryRun.startedAt,
+      finishedAt: new Date().toISOString(),
+      images: results.childElementCount,
+      requests: requestCount,
+      result
+    };
+    const entries = readHistory();
+    entries.unshift(entry);
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries.slice(0, HISTORY_MAX_ENTRIES))); } catch {}
+    activeHistoryRun = null;
+    // Com o modal fechado não há o que atualizar: abri-lo já renderiza a lista.
+    if (historyModal.classList.contains('open')) renderHistory();
+  }
+
+  // ---- URL -----------------------------------------------------------------
+  function extractUrl(text) {
+    text = text.trim();
+    const markdown = text.match(/\]\((https?:\/\/[^)\s]+)\)/i);
+    if (markdown) return markdown[1].replace(/&amp;/g, '&');
+    const plain = text.match(/https?:\/\/[^\s<>]+/i);
+    return plain ? plain[0].replace(/[)\].,]+$/, '').replace(/&amp;/g, '&') : text;
+  }
+
+  function buildUrl(template, number) {
+    if (!NUMBER_MARKER.test(template)) throw new Error('Não encontrei um número imediatamente antes de _s.jpg na URL.');
+    return template.replace(NUMBER_MARKER, String(number));
+  }
+
+  /**
+   * Substitui o conteúdo do campo URL pelo texto colado. O "Número inicial" nunca é
+   * alterado pela colagem: a busca sempre parte do valor que está nesse campo.
+   */
+  function applyPastedText(text) {
+    urlField.value = text.trim();
+  }
+
+  // ---- Carregamento --------------------------------------------------------
+  /**
+   * Sorteia a espera real a partir do intervalo configurado: varia uniformemente entre
+   * -35% e +35% e nunca fica abaixo de 1 segundo. Evita um ritmo fixo e previsível.
+   */
+  function jitteredDelay(baseMs) {
+    const factor = 1 + (Math.random() * 2 - 1) * JITTER_RATIO;
+    return Math.max(MIN_DELAY_MS, Math.round(baseMs * factor));
+  }
+
+  /** Espera um intervalo sorteado em torno de `baseMs`, ou menos se a busca for parada. */
+  function wait(baseMs, token) {
+    const ms = jitteredDelay(baseMs);
+    return new Promise(resolve => {
+      if (!isCurrent(token)) return resolve();
+      const done = () => {
+        clearTimeout(timer);
+        document.removeEventListener(STOP_EVENT, done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      document.addEventListener(STOP_EVENT, done, { once: true });
+    });
+  }
+
+  /** Resolve com o elemento <img> carregado, ou null em erro, timeout ou cancelamento. */
+  function checkImage(url, timeoutMs = IMAGE_TIMEOUT_MS) {
+    return new Promise(resolve => {
+      const img = new Image();
+      let finished = false;
+      const finish = ok => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        img.onload = img.onerror = null;
+        if (activeCancel === cancel) activeCancel = null;
+        const valid = ok && img.naturalWidth > 0 && img.naturalHeight > 0;
+        if (!valid) img.removeAttribute('src');
+        resolve(valid ? img : null);
+      };
+      const cancel = () => finish(false);
+      activeCancel = cancel;
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      img.onload = () => finish(true);
+      img.onerror = () => finish(false);
+      img.referrerPolicy = 'no-referrer';
+      img.decoding = 'async';
+      img.src = url;
+    });
+  }
+
+  async function loadWithRetries(url, attempts, delay, token) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (!isCurrent(token)) return null;
+      if (attempt > 1) {
+        await wait(delay, token);
+        if (!isCurrent(token)) return null;
+      }
+      requestCount++;
+      status.textContent = `Verificando imagem — tentativa ${attempt}/${attempts}\n${progressLine()}`;
+      const image = await checkImage(url);
+      if (image) return image;
+    }
+    return null;
+  }
+
+  // ---- VTT das miniaturas --------------------------------------------------
+  /** Formata segundos como m:ss ou h:mm:ss (sem frações). */
+  function formatTime(seconds) {
+    const total = Math.floor(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = String(total % 60).padStart(2, '0');
+    return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+  }
+
+  /** "00:01:02.500" ou "01:02.500" -> segundos. */
+  function parseVttTime(text) {
+    const parts = text.trim().split(':').map(Number);
+    if (parts.some(n => !Number.isFinite(n))) return NaN;
+    return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+  }
+
+  /** Endereço do VTT na mesma pasta das folhas: .../video-432p_vtt_N_s.jpg -> .../video-432p.vtt */
+  function vttUrlFor(template) {
+    const url = new URL(template);
+    if (!SHEET_FILE_RE.test(url.pathname)) return null;
+    url.pathname = url.pathname.replace(SHEET_FILE_RE, '.vtt');
+    url.hash = '';
+    return url.href;
+  }
+
+  /**
+   * Lê o VTT de miniaturas (formato do Movie Thumbnailer): cada entrada liga um trecho de tempo
+   * a uma folha e à posição da miniatura nela (#xywh=x,y,largura,altura, em pixels da folha).
+   */
+  function parseThumbnailVtt(text) {
+    if (!/^﻿?WEBVTT/.test(text)) return null;
+    const cues = [];
+    for (const block of text.replace(/\r/g, '').split(/\n{2,}/)) {
+      const lines = block.split('\n');
+      const i = lines.findIndex(line => line.includes('-->'));
+      if (i < 0 || !lines[i + 1]) continue;
+      const [startText, endText] = lines[i].split('-->');
+      const start = parseVttTime(startText);
+      const end = parseVttTime(endText.trim().split(/\s+/)[0]);
+      const ref = lines[i + 1].trim().match(/_vtt_(\d+)_s\.jpg#xywh=(\d+),(\d+),(\d+),(\d+)$/i);
+      if (!ref || !Number.isFinite(start) || !Number.isFinite(end)) continue;
+      cues.push({ start, end, sheet: +ref[1], x: +ref[2], y: +ref[3], w: +ref[4], h: +ref[5] });
+    }
+    if (!cues.length) return null;
+    cues.sort((a, b) => a.start - b.start);
+    const bySheet = new Map();
+    for (const cue of cues) {
+      if (!bySheet.has(cue.sheet)) bySheet.set(cue.sheet, []);
+      bySheet.get(cue.sheet).push(cue);
+    }
+    return { bySheet, lastSheet: Math.max(...bySheet.keys()), duration: cues[cues.length - 1].end };
+  }
+
+  /**
+   * Baixa o VTT uma vez por busca. Usa o mesmo tipo de pedido do site (fetch em modo CORS,
+   * sem cookies). Qualquer falha devolve null: a busca segue sem marcas.
+   */
+  async function loadVtt(template) {
+    const url = vttUrlFor(template);
+    if (!url) return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), VTT_TIMEOUT_MS);
+    const onStop = () => controller.abort();
+    document.addEventListener(STOP_EVENT, onStop, { once: true });
+    requestCount++;
+    try {
+      const response = await fetch(url, { mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer', signal: controller.signal });
+      return response.ok ? parseThumbnailVtt(await response.text()) : null;
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+      document.removeEventListener(STOP_EVENT, onStop);
+    }
+  }
+
+  /** Desenha, sobre uma folha, as marcas de cada minuto que cai dentro de uma de suas miniaturas. */
+  function decorateSheet(sheet) {
+    if (!displayedVtt || sheet.dataset.decorated) return;
+    const cues = displayedVtt.bySheet.get(Number(sheet.dataset.sheet));
+    const img = sheet.querySelector('img');
+    if (!cues || !img) return;
+    const pct = (value, total) => `${(value / total) * 100}%`;
+    const layer = document.createElement('div');
+    layer.className = 'sheetLayer';
+    for (const cue of cues) {
+      // A miniatura marcada é a que o player mostra ao apontar exatamente para m:00.
+      const minute = Math.ceil(cue.start / 60);
+      if (minute < 1 || minute * 60 >= cue.end) continue;
+      const tile = document.createElement('div');
+      tile.className = 'tile minuteMark';
+      tile.style.left = pct(cue.x, img.naturalWidth);
+      tile.style.top = pct(cue.y, img.naturalHeight);
+      tile.style.width = pct(cue.w, img.naturalWidth);
+      tile.style.height = pct(cue.h, img.naturalHeight);
+      const label = document.createElement('span');
+      label.className = 'minuteLabel';
+      label.textContent = formatTime(minute * 60);
+      tile.appendChild(label);
+      layer.appendChild(tile);
+    }
+    sheet.appendChild(layer);
+    sheet.dataset.decorated = '1';
+  }
+
+  function addResult(img, sheetNumber) {
+    img.alt = '';
+    img.removeAttribute('title');
+    img.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+    const sheet = document.createElement('div');
+    sheet.className = 'sheet';
+    sheet.dataset.sheet = sheetNumber;
+    sheet.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+    sheet.appendChild(img);
+    decorateSheet(sheet);
+    results.appendChild(sheet);
+  }
+
+  // ---- Dica com o tempo da miniatura sob o mouse ---------------------------
+  const tileTip = $('tileTip');
+  const hideTip = () => { tileTip.style.display = 'none'; };
+
+  /** Acha a miniatura sob o ponteiro pelo VTT e mostra o trecho de tempo dela. */
+  function updateTip(event) {
+    const sheet = event.target.closest?.('.sheet');
+    const img = sheet?.querySelector('img');
+    const cues = sheet && displayedVtt?.bySheet.get(Number(sheet.dataset.sheet));
+    if (!cues || !img) return hideTip();
+    const rect = sheet.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width * img.naturalWidth;
+    const y = (event.clientY - rect.top) / rect.height * img.naturalHeight;
+    const cue = cues.find(c => x >= c.x && x < c.x + c.w && y >= c.y && y < c.y + c.h);
+    if (!cue) return hideTip();
+    tileTip.textContent = `${formatTime(cue.start)} – ${formatTime(cue.end)} (folha ${cue.sheet})`;
+    tileTip.style.display = 'block';
+    const offset = 14;
+    const left = event.clientX + offset + tileTip.offsetWidth > window.innerWidth
+      ? event.clientX - offset - tileTip.offsetWidth
+      : event.clientX + offset;
+    tileTip.style.left = `${Math.max(0, left)}px`;
+    tileTip.style.top = `${event.clientY + offset}px`;
+  }
+
+  // ---- Execução ------------------------------------------------------------
+  function readRunParams() {
+    const startRaw = $('start').value.trim();
+    const first = startRaw === '' ? 0 : Number(startRaw);
+    if (!Number.isSafeInteger(first) || first < 0) throw new Error('O número inicial deve ser um inteiro igual ou maior que zero (e não grande demais).');
+    $('start').value = first;
+
+    const template = extractUrl(urlField.value);
+    if (!template) throw new Error('Cole uma URL inicial da imagem.');
+    let parsed;
+    try { parsed = new URL(template); } catch { throw new Error('URL inválida: o texto não é um endereço reconhecível.'); }
+    if (!/^https?:$/.test(parsed.protocol)) throw new Error('URL inválida: use um endereço http ou https.');
+    buildUrl(template, first);   // lança erro se não houver número antes de _s.jpg
+
+    const params = {
+      template,
+      first,
+      limit: normalizeField('limit'),
+      delay: normalizeField('delay'),
+      retries: normalizeField('retries')
+    };
+    saveSettings();
+    return params;
+  }
+
+  async function run() {
+    if (running) return;
+    let params;
+    try { params = readRunParams(); }
+    catch (error) { status.textContent = error.message; return; }
+    const { template, first, limit, delay, retries } = params;
+    // A URL já foi validada e guardada em `template`; o campo é limpo para a próxima colagem.
+    // Se a validação falhar (acima), o campo é mantido para o usuário corrigir.
+    urlField.value = '';
+
+    const probeAttempts = Math.max(1, retries - 1);
+    results.replaceChildren();
+    displayedVtt = null;
+    vttChecked = false;
+    hideTip();
+    requestCount = 0;
+    activeHistoryRun = {
+      url: template,
+      startedAt: new Date().toISOString(),
+      settings: { start: first, limit, delay, retries }
+    };
+
+    running = true;
+    const token = ++runToken;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+    // O VTT diz o tempo de cada miniatura (para as marcas) e quantas folhas existem.
+    status.textContent = 'Baixando o VTT das miniaturas…';
+    const vtt = await loadVtt(template);
+    if (token !== runToken) return;
+    displayedVtt = vtt;
+    vttChecked = true;
+
+    let confirmedEnd = false;
+    let vttEnd = false;      // todas as folhas listadas no VTT já foram verificadas
+    let cachedNext = null;   // imagem n+1 já carregada pela sondagem
+    let found = 0;
+    let lastFound = null;    // índice da última folha carregada
+    const registerFound = (n, image) => {
+      found++;
+      lastFound = n;
+      addResult(image, n);
+      const position = vtt ? ` (folha ${n + 1} de ${vtt.lastSheet + 1})` : '';
+      status.textContent = `Imagem ${n} carregada${position}.\n${progressLine()}`;
+    };
+
+    // O limite conta imagens novas. Como só uma lacuna de um índice é tolerada,
+    // o laço examina no máximo cerca de 2 × limit índices antes de terminar.
+    for (let n = first; found < limit && isCurrent(token); n++) {
+      // Com o VTT, o total de folhas é conhecido: não é preciso pedir índices inexistentes.
+      if (vtt && n > vtt.lastSheet) { vttEnd = true; break; }
+      let image;
+      if (cachedNext?.number === n) {
+        image = cachedNext.image;
+        cachedNext = null;
+      } else {
+        if (requestCount > 0) {
+          await wait(delay, token);
+          if (!isCurrent(token)) break;
+        }
+        image = await loadWithRetries(buildUrl(template, n), retries, delay, token);
+      }
+      if (!isCurrent(token)) break;
+
+      if (!image) {
+        if (vtt && n >= vtt.lastSheet) {
+          // Não há folha seguinte para sondar: o VTT termina aqui.
+          confirmedEnd = true;
+          status.textContent = `A folha ${n}, a última listada no VTT, não carregou após as tentativas.\n${progressLine()}`;
+          break;
+        }
+        // Uma falha isolada não basta para declarar o fim: sonda o índice seguinte.
+        await wait(delay, token);
+        if (!isCurrent(token)) break;
+        const nextImage = await loadWithRetries(buildUrl(template, n + 1), probeAttempts, delay, token);
+        if (!isCurrent(token)) break;
+
+        if (nextImage) {
+          // n+1 existe: n foi lacuna ou falha transitória. O incremento do laço chega a n+1,
+          // que reutiliza a imagem já carregada.
+          cachedNext = { number: n + 1, image: nextImage };
+          status.textContent = `A imagem ${n} falhou, mas ${n + 1} existe. Continuando pela próxima imagem.`;
+          continue;
+        }
+
+        confirmedEnd = true;
+        status.textContent = `Fim provável da sequência: ${n} e ${n + 1} não carregaram após as tentativas.\n${progressLine()}`;
+        break;
+      }
+
+      registerFound(n, image);
+    }
+
+    // Parar e Limpar incrementam runToken e já cuidam do estado e do histórico.
+    if (token !== runToken) return;
+
+    // Uma imagem guardada pela sondagem é sempre consumida na volta seguinte do laço,
+    // pois ainda não foi contada em found; aqui não sobra nenhuma pendente.
+    // Se o limite coincidiu com a última folha do VTT, a sequência também terminou.
+    if (vtt && !confirmedEnd && lastFound === vtt.lastSheet) vttEnd = true;
+    let result;
+    if (vttEnd) {
+      result = 'Fim da sequência (VTT)';
+      status.textContent = (found
+        ? `Fim da sequência: todas as folhas listadas no VTT (0 a ${vtt.lastSheet}) foram verificadas.`
+        : `Nenhuma folha a partir do índice ${first}: o VTT lista as folhas só até a ${vtt.lastSheet}.`) + `\n${progressLine()}`;
+    } else if (confirmedEnd) {
+      result = 'Fim provável da sequência';
+    } else {
+      result = 'Limite alcançado';
+      status.textContent = `Limite alcançado: ${found} imagens.\n${progressLine()}`;
+    }
+    finishHistory(result);
+    running = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  /** Interrompe a busca atual: invalida o token, cancela carga e espera pendentes. */
+  function abortRun() {
+    running = false;
+    runToken++;
+    if (activeCancel) activeCancel();
+    document.dispatchEvent(new Event(STOP_EVENT));
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  // ---- Modais --------------------------------------------------------------
+  function openModal(modal, trigger) {
+    for (const m of modals) if (m !== modal) closeModal(m, false);
+    modal.classList.add('open');
+    trigger?.setAttribute('aria-expanded', 'true');
+    modalTrigger = trigger || null;
+    modal.querySelector('.modalClose').focus();
+  }
+
+  function closeModal(modal, restoreFocus = true) {
+    if (!modal.classList.contains('open')) return;
+    modal.classList.remove('open');
+    document.querySelector(`[aria-controls="${modal.id}"]`)?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && modalTrigger) modalTrigger.focus();
+    modalTrigger = null;
+  }
+
+  function toggleModal(modal, trigger) {
+    if (modal.classList.contains('open')) closeModal(modal);
+    else openModal(modal, trigger);
+  }
+
+  // ---- Bookmarklet ---------------------------------------------------------
+  // O favorito usa PerformanceObserver com `buffered: false`: só captura requisições feitas
+  // DEPOIS de ser ativado. Por isso é preciso clicar nele antes de passar o mouse na timeline;
+  // thumbnails já carregadas antes da ativação não aparecem.
+  const bookmarkletCode = `javascript:(()=>{if(window.__thumbWatch){alert('Monitor já está ativo.');return;}window.__thumbWatch=true;let latest='';const box=document.createElement('div');box.style='position:fixed;z-index:2147483647;right:16px;bottom:16px;width:min(520px,90vw);padding:12px;background:#15171a;color:#fff;border:2px solid #3478d4;border-radius:8px;font:14px system-ui;box-shadow:0 4px 24px #0008';box.innerHTML='<b>Captura de thumbnails</b><div id="tw-url" style="margin:8px 0;overflow-wrap:anywhere;max-height:100px;overflow:auto">Monitor ativo. Passe o mouse sobre a barra de progresso do vídeo desejado.</div><button id="tw-copy" style="padding:8px 12px">Copiar URL capturada</button> <button id="tw-close" style="padding:8px 12px">Fechar</button>';document.body.appendChild(box);const out=box.querySelector('#tw-url');const obs=new PerformanceObserver(list=>{for(const e of list.getEntries()){const u=e.name,l=u.toLowerCase();if(l.includes('${THUMB_HOST}/img/')&&l.includes('/video-')&&l.includes('_vtt_')&&l.includes('_s.jpg')){latest=u;out.textContent='Nova imagem capturada: '+u;}}});try{obs.observe({type:'resource',buffered:false})}catch(e){obs.observe({entryTypes:['resource']})}const close=()=>{obs.disconnect();window.__thumbWatch=false;box.remove()};box.querySelector('#tw-copy').onclick=async()=>{if(!latest){alert('Nenhuma nova imagem capturada. Passe o mouse sobre a timeline do vídeo atual.');return;}try{await navigator.clipboard.writeText(latest)}catch(e){prompt('Copie a URL capturada:',latest)}close()};box.querySelector('#tw-close').onclick=close;})();`;
+
+  // ---- Inicialização e eventos --------------------------------------------
+  loadSettings();
+  let savedTheme = 'auto';
+  try { savedTheme = localStorage.getItem(THEME_KEY) || 'auto'; } catch {}
+  applyTheme(savedTheme, false);
+  for (const id of SETTING_FIELDS) {
+    $(id).addEventListener('input', saveSettings);
+    $(id).addEventListener('change', saveSettings);
+  }
+  // Ao sair do campo de intervalo, um valor abaixo de 1000 ms (ou vazio) é corrigido na hora.
+  $('delay').addEventListener('change', () => { normalizeField('delay'); saveSettings(); });
+  $('themeToggle').addEventListener('click', () => {
+    applyTheme(THEME_MODES[(THEME_MODES.indexOf(themeMode) + 1) % THEME_MODES.length]);
+  });
+
+  $('bookmarklet').value = bookmarkletCode;
+  $('bookmarkToggle').addEventListener('click', e => toggleModal(bookmarkModal, e.currentTarget));
+  $('closeBookmark').addEventListener('click', () => closeModal(bookmarkModal));
+  $('historyToggle').addEventListener('click', e => {
+    renderHistory();
+    toggleModal(historyModal, e.currentTarget);
+  });
+  $('closeHistory').addEventListener('click', () => closeModal(historyModal));
+  $('clearHistory').addEventListener('click', () => {
+    try { localStorage.removeItem(HISTORY_KEY); } catch {}
+    renderHistory();
+  });
+  // Clicar fora fecha os painéis. O botão que abre cada painel é ignorado, porque ele
+  // mesmo alterna o painel. O foco não volta ao botão: fica onde o usuário clicou.
+  document.addEventListener('pointerdown', event => {
+    for (const m of modals) {
+      if (!m.classList.contains('open')) continue;
+      const trigger = document.querySelector(`[aria-controls="${m.id}"]`);
+      if (m.contains(event.target) || trigger?.contains(event.target)) continue;
+      closeModal(m, false);
+    }
+  });
+
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') for (const m of modals) closeModal(m);
+  });
+  $('copyBookmarklet').addEventListener('click', async () => {
+    const btn = $('copyBookmarklet');
+    try {
+      await navigator.clipboard.writeText(bookmarkletCode);
+      btn.textContent = 'Código copiado';
+    } catch {
+      $('bookmarklet').focus();
+      $('bookmarklet').select();
+      btn.textContent = 'Selecione e copie o código';
+    }
+  });
+
+  $('pasteBtn').addEventListener('click', async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) {
+        status.textContent = 'A área de transferência está vazia.';
+        return;
+      }
+      applyPastedText(text);
+      status.textContent = 'URL colada. Confira o número inicial e clique em Iniciar.';
+    } catch {
+      const pasted = prompt('O navegador bloqueou a leitura automática da área de transferência. Cole a URL aqui:');
+      if (pasted && pasted.trim()) {
+        applyPastedText(pasted);
+        status.textContent = 'URL inserida. Confira o número inicial e clique em Iniciar.';
+      } else {
+        status.textContent = 'Nenhuma URL foi inserida.';
+      }
+    }
+    urlField.focus();
+  });
+
+  $('clearBtn').addEventListener('click', () => {
+    abortRun();
+    activeHistoryRun = null;   // limpar descarta a busca em andamento sem gravá-la
+    results.replaceChildren();
+    displayedVtt = null;
+    vttChecked = false;
+    hideTip();
+    urlField.value = '';
+    requestCount = 0;
+    status.textContent = 'Conteúdo limpo.';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  const topBtn = $('topBtn');
+  const updateTopButton = () => topBtn.classList.toggle('visible', window.scrollY > 300);
+  window.addEventListener('scroll', updateTopButton, { passive: true });
+  updateTopButton();
+  topBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+  results.addEventListener('mousemove', updateTip);
+  results.addEventListener('mouseleave', hideTip);
+  window.addEventListener('scroll', hideTip, { passive: true });
+
+  startBtn.addEventListener('click', run);
+  /** Para a busca em andamento e grava no histórico como interrompida. */
+  function stopRun() {
+    if (!running) return;
+    finishHistory('Interrompida');
+    abortRun();
+    status.textContent += '\nBusca interrompida.';
+  }
+  stopBtn.addEventListener('click', stopRun);
+})();
+</script>
+</body>
+</html>
